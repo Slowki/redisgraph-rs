@@ -1,6 +1,6 @@
 [package]
 name = "redisgraph"
-version = "0.3.0"
+version = "0.6.0"
 authors = ["Malte Voos <voos.malte@gmail.com>"]
 keywords = ["redis", "database", "graph-database"]
 description = "A Rust client for RedisGraph."
@@ -11,11 +11,16 @@ license = "MIT"
 readme = "README.md"
 edition = "2018"
 
+[features]
+default = []
+aio = ["redis/aio", "tokio"]
+
 [dependencies]
-redis = "0.15.1"
+redis = "0.17.0"
 num = "0.2.1"
 num-derive = "0.3.0"
 num-traits = "0.2.11"
+tokio = { version = "0.2.22", features = ["sync"], optional = true }
 
 [dev-dependencies]
 serial_test = "0.4.0"

@@ -5,16 +5,16 @@ use std::str;
 use num::FromPrimitive;
 use redis::{FromRedisValue, Value};
 
-use crate::{server_type_error, Graph, RedisGraphError, RedisGraphResult};
+use crate::{graph::GraphInfo, server_type_error, RedisGraphError, RedisGraphResult};
 
 /// Implemented by types that can be contructed from a
-/// Redis [`Value`](https://docs.rs/redis/0.15.1/redis/enum.Value.html) and a [`Graph`](../graph/struct.Graph.html)
+/// Redis [`Value`](https://docs.rs/redis/0.15.1/redis/enum.Value.html) and a [`GraphInfo`](../graph/struct.GraphInfo.html)
 pub trait FromRedisValueWithGraph: Sized {
-    fn from_redis_value_with_graph(value: Value, graph: &Graph) -> RedisGraphResult<Self>;
+    fn from_redis_value_with_graph(value: Value, graph_info: &GraphInfo) -> RedisGraphResult<Self>;
 }
 
 impl<T: FromRedisValue> FromRedisValueWithGraph for T {
-    fn from_redis_value_with_graph(value: Value, _graph: &Graph) -> RedisGraphResult<T> {
+    fn from_redis_value_with_graph(value: Value, _graph_info: &GraphInfo) -> RedisGraphResult<T> {
         T::from_redis_value(&value).map_err(RedisGraphError::from)
     }
 }
@@ -154,7 +154,7 @@ enum ColumnType {
 }
 
 impl FromRedisValueWithGraph for ResultSet {
-    fn from_redis_value_with_graph(value: Value, graph: &Graph) -> RedisGraphResult<Self> {
+    fn from_redis_value_with_graph(value: Value, graph_info: &GraphInfo) -> RedisGraphResult<Self> {
         match value {
             Value::Bulk(mut values) => {
                 match values.len() {
@@ -202,7 +202,7 @@ impl FromRedisValueWithGraph for ResultSet {
                                                     result_table
                                                         .iter_mut()
                                                         .map(|row| {
-                                                            Scalar::from_redis_value_with_graph(row[i].take(), graph)
+                                                            Scalar::from_redis_value_with_graph(row[i].take(), graph_info)
                                                                 .map_err(RedisGraphError::from)
                                                         })
                                                         .collect::<RedisGraphResult<Vec<Scalar>>>()?,
@@ -211,7 +211,7 @@ impl FromRedisValueWithGraph for ResultSet {
                                                     result_table
                                                         .iter_mut()
                                                         .map(|row| {
-                                                            Node::from_redis_value_with_graph(row[i].take(), graph)
+                                                            Node::from_redis_value_with_graph(row[i].take(), graph_info)
                                                                 .map_err(RedisGraphError::from)
                                                         })
                                                         .collect::<RedisGraphResult<Vec<Node>>>()?,
@@ -220,7 +220,7 @@ impl FromRedisValueWithGraph for ResultSet {
                                                     result_table
                                                         .iter_mut()
                                                         .map(|row| {
-                                                            Relation::from_redis_value_with_graph(row[i].take(), graph)
+                                                            Relation::from_redis_value_with_graph(row[i].take(), graph_info)
                                                                 .map_err(RedisGraphError::from)
                                                         })
                                                         .collect::<RedisGraphResult<Vec<Relation>>>()?,
@@ -354,7 +354,10 @@ enum ScalarType {
 }
 
 impl FromRedisValueWithGraph for Scalar {
-    fn from_redis_value_with_graph(value: Value, _graph: &Graph) -> RedisGraphResult<Self> {
+    fn from_redis_value_with_graph(
+        value: Value,
+        _graph_info: &GraphInfo,
+    ) -> RedisGraphResult<Self> {
         match value {
             Value::Bulk(mut values) => {
                 if values.len() == 2 {
@@ -413,14 +416,14 @@ pub struct Node {
 }
 
 impl FromRedisValueWithGraph for Node {
-    fn from_redis_value_with_graph(value: Value, graph: &Graph) -> RedisGraphResult<Self> {
+    fn from_redis_value_with_graph(value: Value, graph_info: &GraphInfo) -> RedisGraphResult<Self> {
         match value {
             Value::Bulk(mut values) => {
                 if values.len() == 3 {
                     let label_ids = values[1].take();
                     let properties = values[2].take();
 
-                    let graph_labels = graph.labels();
+                    let graph_labels = &graph_info.labels;
                     let labels = match label_ids {
                         Value::Bulk(label_ids) => label_ids
                             .iter()
@@ -439,7 +442,7 @@ impl FromRedisValueWithGraph for Node {
                         _ => return server_type_error!("expected array as label IDs"),
                     };
 
-                    let properties = parse_properties(graph, properties)?;
+                    let properties = parse_properties(graph_info, properties)?;
 
                     Ok(Self { labels, properties })
                 } else {
@@ -454,14 +457,14 @@ impl FromRedisValueWithGraph for Node {
 /// A relation returned by RedisGraph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Relation {
-    /// The type name of this relation. 
+    /// The type name of this relation.
     pub type_name: RedisString,
     /// The properties of this relation.
     pub properties: HashMap<RedisString, Scalar>,
 }
 
 impl FromRedisValueWithGraph for Relation {
-    fn from_redis_value_with_graph(value: Value, graph: &Graph) -> RedisGraphResult<Self> {
+    fn from_redis_value_with_graph(value: Value, graph_info: &GraphInfo) -> RedisGraphResult<Self> {
         match value {
             Value::Bulk(mut values) => {
                 if values.len() == 5 {
@@ -469,15 +472,15 @@ impl FromRedisValueWithGraph for Relation {
                     let properties = values[4].take();
 
                     let type_name = match type_id {
-                        Value::Int(id) => graph
-                            .relationship_types()
+                        Value::Int(id) => graph_info
+                            .relationship_types
                             .get(id as usize)
                             .cloned()
                             .ok_or(RedisGraphError::RelationshipTypeNotFound)?,
                         _ => return server_type_error!("expected integer as relationship type ID",),
                     };
 
-                    let properties = parse_properties(graph, properties)?;
+                    let properties = parse_properties(graph_info, properties)?;
 
                     Ok(Self {
                         type_name,
@@ -493,10 +496,10 @@ impl FromRedisValueWithGraph for Relation {
 }
 
 fn parse_properties(
-    graph: &Graph,
+    graph_info: &GraphInfo,
     properties: Value,
 ) -> RedisGraphResult<HashMap<RedisString, Scalar>> {
-    let graph_property_keys = graph.property_keys();
+    let graph_property_keys = &graph_info.property_keys;
     match properties {
         Value::Bulk(properties) => properties
             .into_iter()
@@ -517,7 +520,7 @@ fn parse_properties(
 
                         let property_value = Scalar::from_redis_value_with_graph(
                             Value::Bulk(vec![property_type, property_value]),
-                            graph,
+                            graph_info,
                         )?;
 
                         Ok((property_key, property_value))

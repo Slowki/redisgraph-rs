@@ -6,14 +6,18 @@ use crate::{
     server_type_error, RedisGraphError, RedisGraphResult, RedisString, ResultSet,
 };
 
+pub struct GraphInfo {
+    pub(crate) name: String,
+    pub(crate) labels: Vec<RedisString>,
+    pub(crate) relationship_types: Vec<RedisString>,
+    pub(crate) property_keys: Vec<RedisString>,
+}
+
 /// Represents a single graph in the database.
 pub struct Graph {
     conn: Connection,
-    name: String,
-
-    labels: Vec<RedisString>,
-    relationship_types: Vec<RedisString>,
-    property_keys: Vec<RedisString>,
+    /// Information about the graph.
+    graph_info: GraphInfo,
 }
 
 impl Graph {
@@ -23,10 +27,12 @@ impl Graph {
     pub fn open(conn: Connection, name: String) -> RedisGraphResult<Self> {
         let mut graph = Self {
             conn,
-            name,
-            labels: Vec::new(),
-            relationship_types: Vec::new(),
-            property_keys: Vec::new(),
+            graph_info: GraphInfo {
+                name,
+                labels: Vec::new(),
+                relationship_types: Vec::new(),
+                property_keys: Vec::new(),
+            },
         };
 
         // Create a dummy node and delete it again.
@@ -87,7 +93,7 @@ impl Graph {
     /// updates the label names automatically when they become outdated.
     pub fn update_labels(&mut self) -> RedisGraphResult<()> {
         let refresh_response = self.request("CALL db.labels()")?;
-        self.labels = self.get_mapping(refresh_response)?;
+        self.graph_info.labels = self.get_mapping(refresh_response)?;
         Ok(())
     }
 
@@ -97,7 +103,7 @@ impl Graph {
     /// updates the relationship type names automatically when they become outdated.
     pub fn update_relationship_types(&mut self) -> RedisGraphResult<()> {
         let refresh_response = self.request("CALL db.relationshipTypes()")?;
-        self.relationship_types = self.get_mapping(refresh_response)?;
+        self.graph_info.relationship_types = self.get_mapping(refresh_response)?;
         Ok(())
     }
 
@@ -107,28 +113,28 @@ impl Graph {
     /// updates the property key names automatically when they become outdated.
     pub fn update_property_keys(&mut self) -> RedisGraphResult<()> {
         let refresh_response = self.request("CALL db.propertyKeys()")?;
-        self.property_keys = self.get_mapping(refresh_response)?;
+        self.graph_info.property_keys = self.get_mapping(refresh_response)?;
         Ok(())
     }
 
     /// Returns the name of this graph.
     pub fn name(&self) -> &str {
-        &self.name
+        &self.graph_info.name
     }
 
     /// Returns the graph's internal label names.
     pub fn labels(&self) -> &[RedisString] {
-        &self.labels[..]
+        &self.graph_info.labels[..]
     }
 
     /// Returns the graph's internal relationship type names.
     pub fn relationship_types(&self) -> &[RedisString] {
-        &self.relationship_types[..]
+        &self.graph_info.relationship_types[..]
     }
 
     /// Returns the graph's internal property key names.
     pub fn property_keys(&self) -> &[RedisString] {
-        &self.property_keys[..]
+        &self.graph_info.property_keys[..]
     }
 
     fn request(&mut self, query: &str) -> RedisGraphResult<Value> {
@@ -141,7 +147,7 @@ impl Graph {
     }
 
     fn get_result_set(&mut self, response: Value) -> RedisGraphResult<ResultSet> {
-        match ResultSet::from_redis_value_with_graph(response.clone(), self) {
+        match ResultSet::from_redis_value_with_graph(response.clone(), &self.graph_info) {
             Ok(result_set) => Ok(result_set),
             Err(RedisGraphError::LabelNotFound) => {
                 self.update_labels()?;
@@ -160,7 +166,7 @@ impl Graph {
     }
 
     fn get_mapping(&self, response: Value) -> RedisGraphResult<Vec<RedisString>> {
-        let mut result_set = ResultSet::from_redis_value_with_graph(response, self)?;
+        let mut result_set = ResultSet::from_redis_value_with_graph(response, &self.graph_info)?;
         match &mut result_set.columns[0] {
             Column::Scalars(scalars) => scalars
                 .iter_mut()

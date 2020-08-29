@@ -14,8 +14,8 @@ If you want to use this crate, add this to your Cargo.toml:
 
 ```ini
 [dependencies]
-redis = "0.15.1"
-redisgraph = "0.1.0"
+redis = "0.17.0"
+redisgraph = "0.6.0"
 ```
 
 **Warning**: This library has not been thoroughly tested yet and some features are still missing.
